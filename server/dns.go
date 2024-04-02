@@ -13,7 +13,7 @@ import (
 
 const (
 	connType   = "udp"
-	pathToDB   = "DNS_data.txt"
+	defaultPathToDataFile   = "DNS_data.txt"
 	maxMsgSize = 512
 	defaultTTL = 86400
 )
@@ -49,7 +49,7 @@ var stringToDNSClassMap = map[string]dnsClass{
 	"HS": HS,
 }
 
-type DNSRecord struct {
+type dnsRecord struct {
 	Name  string
 	Type  dnsType
 	Class dnsClass
@@ -67,18 +67,32 @@ type DNSHeader struct {
 
 type DNSServer struct {
 	UDPConn    *net.UDPConn
-	recordsMap map[DNSRecord]string
+	recordsMap map[dnsRecord]string
+	pathToDataFile string
 }
 
 func NewDNS() *DNSServer {
-	dns := DNSServer{nil, map[DNSRecord]string{}}
+	dns := DNSServer{nil, map[dnsRecord]string{}, defaultPathToDataFile}
+	dns.init()
+	return &dns
+}
+
+func NewDNSWithDataFile(pathToDataFile string) *DNSServer {
+	dns := DNSServer{nil, map[dnsRecord]string{}, pathToDataFile}
 	dns.init()
 	return &dns
 }
 
 func (dns *DNSServer) init() {
-	if err := dns.loadDNSRecords(pathToDB); err != nil {
+	if err := dns.loadDNSRecords(dns.pathToDataFile); err != nil {
 		fmt.Println(err)
+	}
+}
+
+func (dns *DNSServer) SetPathToDataFile(pathToDataFile string) {
+	if pathToDataFile != dns.pathToDataFile {
+		dns.pathToDataFile = pathToDataFile
+		dns.init()
 	}
 }
 
@@ -115,7 +129,7 @@ func (dns *DNSServer) handleDNSRequest(remoteAddr *net.UDPAddr, request []byte) 
 		fmt.Println(err)
 	}
 
-	qRecords := make([]DNSRecord, 0, header.QDCount)
+	qRecords := make([]dnsRecord, 0, header.QDCount)
 	for range header.QDCount {
 		domain, err := extractDomain(requestBuffer)
 		if err != nil {
@@ -124,7 +138,7 @@ func (dns *DNSServer) handleDNSRequest(remoteAddr *net.UDPAddr, request []byte) 
 		}
 		qtype := dnsType(binary.BigEndian.Uint16(requestBuffer.Next(2)))
 		qclass := dnsClass(binary.BigEndian.Uint16(requestBuffer.Next(2)))
-		qRecords = append(qRecords, DNSRecord{domain, qtype, qclass, defaultTTL})
+		qRecords = append(qRecords, dnsRecord{domain, qtype, qclass, defaultTTL})
 	}
 
 	qAnswers := make([]string, 0)
@@ -140,7 +154,7 @@ func (dns *DNSServer) handleDNSRequest(remoteAddr *net.UDPAddr, request []byte) 
 	dns.sendLocalResponse(remoteAddr, header, qRecords, qAnswers)
 }
 
-func (dns *DNSServer) sendLocalResponse(remoteAddr *net.UDPAddr, requestHeader *DNSHeader, qRecords []DNSRecord, qAnswers []string) {
+func (dns *DNSServer) sendLocalResponse(remoteAddr *net.UDPAddr, requestHeader *DNSHeader, qRecords []dnsRecord, qAnswers []string) {
 	response := buildResponse(requestHeader, qRecords, qAnswers)
 
 	if _, err := dns.UDPConn.WriteToUDP(response, remoteAddr); err != nil {
@@ -218,7 +232,7 @@ func encodeRData(rdata string, responseBuf *bytes.Buffer) error {
 }
 
 // Построить ответ на основе локальной записи
-func buildResponse(requestHeader *DNSHeader, qRecords []DNSRecord, qAnswers []string) []byte {
+func buildResponse(requestHeader *DNSHeader, qRecords []dnsRecord, qAnswers []string) []byte {
 	responseBuffer := new(bytes.Buffer)
 	responseHeader := *requestHeader
 	responseHeader.Flags = requestHeader.Flags | 1 << 15 // Ставим QR = 1
@@ -288,7 +302,7 @@ func (dns *DNSServer) loadDNSRecords(filename string) error {
 			continue
 		}
 
-		dns.recordsMap[DNSRecord{
+		dns.recordsMap[dnsRecord{
 			Name:  fields[0],
 			Class: recordClass,
 			Type:  recordType,
