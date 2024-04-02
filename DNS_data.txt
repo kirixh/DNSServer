@@ -1,0 +1,7 @@
+example.com	IN      A       192.168.254.2
+ns1        	IN      A       192.168.254.2
+mail       	IN      A       192.168.254.4
+joe        	IN      A       192.168.254.6
+www        	IN      A       192.168.254.7
+
+;ftp        	IN      CNAME   ftp.example.net.

@@ -21,7 +21,8 @@ const (
 type dnsType uint16
 
 const (
-	A dnsType = iota
+	_ dnsType = iota
+	A
 	CNAME
 	Unknown
 )
@@ -29,7 +30,8 @@ const (
 type dnsClass uint16
 
 const (
-	IN dnsClass = iota
+	_ dnsClass = iota
+	IN
 	CS
 	CH
 	HS
@@ -54,15 +56,6 @@ type DNSRecord struct {
 	TTL   uint32
 }
 
-type DNSAnswer struct {
-	Name   string
-	Type   dnsType
-	Class  dnsClass
-	TTL    uint32
-	Length uint32
-	Data   [4]uint8
-}
-
 type DNSHeader struct {
 	PacketID uint16
 	Flags    uint16
@@ -77,8 +70,8 @@ type DNSServer struct {
 	recordsMap map[DNSRecord]string
 }
 
-func NewDNS(UDPConn *net.UDPConn) *DNSServer {
-	dns := DNSServer{UDPConn, map[DNSRecord]string{}}
+func NewDNS() *DNSServer {
+	dns := DNSServer{nil, map[DNSRecord]string{}}
 	dns.init()
 	return &dns
 }
@@ -89,17 +82,15 @@ func (dns *DNSServer) init() {
 	}
 }
 
-func (dns *DNSServer) Serve(port uint) {
+func (dns *DNSServer) Serve(port uint) error {
 	udpAddr, err := net.ResolveUDPAddr(connType, ":"+strconv.Itoa(int(port)))
 	if err != nil {
-		fmt.Println("Ошибка разрешения адреса:", err)
-		return
+		return fmt.Errorf("ошибка разрешения адреса: %w", err)
 	}
 
 	dns.UDPConn, err = net.ListenUDP(connType, udpAddr)
 	if err != nil {
-		fmt.Println("Ошибка начала слушания:", err)
-		return
+		return fmt.Errorf("ошибка начала слушания: %w", err)
 	}
 	defer dns.UDPConn.Close()
 
@@ -109,7 +100,7 @@ func (dns *DNSServer) Serve(port uint) {
 		buffer := make([]byte, maxMsgSize)
 		_, remoteAddr, err := dns.UDPConn.ReadFromUDP(buffer)
 		if err != nil {
-			fmt.Println("Ошибка чтения:", err)
+			fmt.Println("ошибка чтения:", err)
 			continue
 		}
 
@@ -125,7 +116,7 @@ func (dns *DNSServer) handleDNSRequest(remoteAddr *net.UDPAddr, request []byte) 
 	}
 
 	qRecords := make([]DNSRecord, 0, header.QDCount)
-	for _ = range header.QDCount {
+	for range header.QDCount {
 		domain, err := extractDomain(requestBuffer)
 		if err != nil {
 			fmt.Println(err)
@@ -133,7 +124,7 @@ func (dns *DNSServer) handleDNSRequest(remoteAddr *net.UDPAddr, request []byte) 
 		}
 		qtype := dnsType(binary.BigEndian.Uint16(requestBuffer.Next(2)))
 		qclass := dnsClass(binary.BigEndian.Uint16(requestBuffer.Next(2)))
-		qRecords = append(qRecords, DNSRecord{domain, qtype, qclass, 0})
+		qRecords = append(qRecords, DNSRecord{domain, qtype, qclass, defaultTTL})
 	}
 
 	qAnswers := make([]string, 0)
@@ -161,7 +152,7 @@ func processHeader(requestBuf *bytes.Buffer) (*DNSHeader, error) {
 	var queryHeader DNSHeader
 
 	if err := binary.Read(requestBuf, binary.BigEndian, &queryHeader); err != nil {
-		return nil, fmt.Errorf("Ошибка чтения заголовка: %w", err)
+		return nil, fmt.Errorf("ошибка чтения заголовка: %w", err)
 	}
 	return &queryHeader, nil
 }
@@ -178,7 +169,7 @@ func extractDomain(requestBuf *bytes.Buffer) (string, error) {
 	}
 
 	if err != nil {
-		err = fmt.Errorf("Ошибка извлечения домена: %w", err)
+		err = fmt.Errorf("ошибка извлечения домена: %w", err)
 	}
 
 	return domain[:len(domain)-1], err
@@ -190,15 +181,15 @@ func encodeDomain(domain string, responseBuf *bytes.Buffer) error {
 	for _, label := range parts {
 		if len(label) > 0 {
 			if err := responseBuf.WriteByte(byte(len(label))); err != nil {
-				return fmt.Errorf("Ошибка записи домена в буффер: %w", err)
+				return fmt.Errorf("ошибка записи домена в буффер: %w", err)
 			}
 			if _, err := responseBuf.Write([]byte(label)); err != nil {
-				return fmt.Errorf("Ошибка записи домена в буффер: %w", err)
+				return fmt.Errorf("ошибка записи домена в буффер: %w", err)
 			}
 		}
 	}
 	if err := responseBuf.WriteByte(0x00); err != nil {
-		return fmt.Errorf("Ошибка записи домена в буффер: %w", err)
+		return fmt.Errorf("ошибка записи домена в буффер: %w", err)
 	}
 
 	return nil
@@ -206,19 +197,19 @@ func encodeDomain(domain string, responseBuf *bytes.Buffer) error {
 
 func encodeRData(rdata string, responseBuf *bytes.Buffer) error {
 	parts := strings.Split(rdata, ".")
-	if err := responseBuf.WriteByte(byte(len(parts))); err != nil {
-		return fmt.Errorf("Ошибка записи RDATA в буффер: %w", err)
+	if err := binary.Write(responseBuf, binary.BigEndian, uint16(len(parts))); err != nil {
+		return fmt.Errorf("ошибка записи RDATA в буффер: %w", err)
 	}
 
 	for _, label := range parts {
 		if len(label) > 0 {
 			data, err := strconv.Atoi(label)
 			if err != nil {
-				return fmt.Errorf("Ошибка записи домена в буффер: %w", err)
+				return fmt.Errorf("ошибка записи домена в буффер: %w", err)
 			}
 
 			if err := responseBuf.WriteByte(byte(data)); err != nil {
-				return fmt.Errorf("Ошибка записи домена в буффер: %w", err)
+				return fmt.Errorf("ошибка записи домена в буффер: %w", err)
 			}
 		}
 	}
@@ -230,10 +221,20 @@ func encodeRData(rdata string, responseBuf *bytes.Buffer) error {
 func buildResponse(requestHeader *DNSHeader, qRecords []DNSRecord, qAnswers []string) []byte {
 	responseBuffer := new(bytes.Buffer)
 	responseHeader := *requestHeader
-	responseHeader.Flags = requestHeader.Flags | 1<<15 // Ставим QR = 1
+	responseHeader.Flags = requestHeader.Flags | 1 << 15 // Ставим QR = 1
+	responseHeader.ANCount = uint16(len(qAnswers))
 	if err := binary.Write(responseBuffer, binary.BigEndian, &responseHeader); err != nil {
 		fmt.Println("Ошибка записи заголовка в буффер: %w", err)
 		return []byte{}
+	}
+
+	for _, qRecord := range qRecords {
+		if err := encodeDomain(qRecord.Name, responseBuffer); err != nil {
+			fmt.Println("Ошибка построения ответа: %w", err)
+			return []byte{}
+		}
+		binary.Write(responseBuffer, binary.BigEndian, &qRecord.Type)
+		binary.Write(responseBuffer, binary.BigEndian, &qRecord.Class)
 	}
 
 	for idx, qAnswer := range qAnswers {
@@ -257,7 +258,7 @@ func (dns *DNSServer) loadDNSRecords(filename string) error {
 
 	file, err := os.Open(filename)
 	if err != nil {
-		return fmt.Errorf("Ошибка открытия файла:", err)
+		return fmt.Errorf("ошибка открытия файла: %w", err)
 	}
 	defer file.Close()
 
@@ -296,7 +297,7 @@ func (dns *DNSServer) loadDNSRecords(filename string) error {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("Ошибка чтения файла: %w", err)
+		return fmt.Errorf("ошибка чтения файла: %w", err)
 	}
 
 	return nil
