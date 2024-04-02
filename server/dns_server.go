@@ -147,7 +147,8 @@ func (dns *DNSServer) handleDNSRequest(remoteAddr *net.UDPAddr, request []byte) 
 		if ok {
 			qAnswers = append(qAnswers, recordData)
 		} else {
-			//handleRemoteDNSRequest(remoteAddr, request)
+			dns.handleRemoteDNSRequest(remoteAddr, request)
+			return
 		}
 	}
 
@@ -209,4 +210,38 @@ func (dns *DNSServer) loadDNSRecords(filename string) error {
 	}
 
 	return nil
+}
+
+func (dns *DNSServer) handleRemoteDNSRequest(remoteAddr *net.UDPAddr, request []byte) {
+	remoteDNSAddr, err := net.ResolveUDPAddr("udp", "8.8.8.8:53")
+	if err != nil {
+		fmt.Println("ошибка разрешения удаленного адреса:", err)
+		return
+	}
+
+	remoteDNSConn, err := net.DialUDP("udp", nil, remoteDNSAddr)
+	if err != nil {
+		fmt.Println("ошибка установки соединения с удаленным DNS:", err)
+		return
+	}
+	defer remoteDNSConn.Close()
+
+	_, err = remoteDNSConn.Write(request)
+	if err != nil {
+		fmt.Println("ошибка отправки запроса на удаленный DNS:", err)
+		return
+	}
+
+	response := make([]byte, maxMsgSize)
+	_, err = remoteDNSConn.Read(response)
+	if err != nil {
+		fmt.Println("ошибка обработки ответа удаленного DNS:", err)
+		return
+	}
+
+	_, err = dns.UDPConn.WriteToUDP(response, remoteAddr)
+	if err != nil {
+		fmt.Println("ошибка отправки ответа клиенту:", err)
+		return
+	}
 }
